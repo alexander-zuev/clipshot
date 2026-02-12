@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCREENSHOTS_DIR="$HOME/.screenshots"
+LATEST="$SCREENSHOTS_DIR/latest.png"
+MAX="${CLIPSHOT_MAX:-50}"
+SHARE_DIR="$HOME/.local/share/clipshot"
+BIN_DIR="$HOME/.local/bin"
+SERVICE_DIR="$HOME/.config/systemd/user"
+REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Convert WSL home to Windows UNC path for PowerShell
+win_save_path() {
+    wslpath -w "$SCREENSHOTS_DIR"
+}
+
+cleanup_old() {
+    local keep="${1:-$MAX}"
+    local files
+    files=$(find "$SCREENSHOTS_DIR" -maxdepth 1 -name 'screenshot_*.png' -printf '%T@\t%p\n' 2>/dev/null | sort -rn | tail -n +$((keep + 1)) | cut -f2-)
+    [ -z "$files" ] && return 0
+    echo "$files" | xargs rm -f
+}
+
+cmd_run() {
+    mkdir -p "$SCREENSHOTS_DIR"
+    local wpath
+    wpath=$(win_save_path)
+
+    powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass \
+        -File "$SHARE_DIR/watcher.ps1" -SavePath "$wpath" 2>&1 |
+    while IFS= read -r line; do
+        line="${line%%$'\r'}"  # strip CR from Windows output
+        case "$line" in
+            READY)
+                echo "clipshot: watcher ready" >&2 ;;
+            SAVED:*)
+                local name="${line#SAVED:}"
+                local file="$SCREENSHOTS_DIR/$name"
+                # Wait briefly for file to appear via UNC mount
+                for _ in 1 2 3 4 5; do [ -f "$file" ] && break; sleep 0.2; done
+                if [ -f "$file" ]; then
+                    ln -sf "$file" "$LATEST"
+                    echo "clipshot: saved $name" >&2
+                    cleanup_old "$MAX"
+                else
+                    echo "clipshot: file not found after save: $name" >&2
+                fi
+                ;;
+            ERROR:*)
+                echo "clipshot: ${line}" >&2 ;;
+            *)
+                ;;  # ignore noise
+        esac
+    done
+}
+
+cmd_install() {
+    mkdir -p "$BIN_DIR" "$SHARE_DIR" "$SERVICE_DIR" "$SCREENSHOTS_DIR"
+    cp "$REPO_DIR/clipshot" "$BIN_DIR/clipshot"
+    chmod +x "$BIN_DIR/clipshot"
+    cp "$REPO_DIR/watcher.ps1" "$SHARE_DIR/watcher.ps1"
+    cp "$REPO_DIR/clipshot.service" "$SERVICE_DIR/clipshot.service"
+    systemctl --user daemon-reload
+    systemctl --user enable clipshot.service
+    echo "Installed. Run: clipshot start"
+}
+
+cmd_uninstall() {
+    systemctl --user stop clipshot.service 2>/dev/null || true
+    systemctl --user disable clipshot.service 2>/dev/null || true
+    rm -f "$BIN_DIR/clipshot"
+    rm -rf "$SHARE_DIR"
+    rm -f "$SERVICE_DIR/clipshot.service"
+    systemctl --user daemon-reload
+    echo "Uninstalled. Screenshots in $SCREENSHOTS_DIR preserved."
+}
+
+cmd_status() {
+    local state
+    state=$(systemctl --user is-active clipshot.service 2>/dev/null || echo "inactive")
+    local count
+    count=$(find "$SCREENSHOTS_DIR" -maxdepth 1 -name 'screenshot_*.png' 2>/dev/null | wc -l)
+    local size
+    size=$(du -sh "$SCREENSHOTS_DIR" 2>/dev/null | cut -f1 || echo "0")
+    local latest_name="-"
+    [ -L "$LATEST" ] && latest_name=$(basename "$(readlink "$LATEST")" 2>/dev/null || echo "-")
+
+    echo "Service:      $state"
+    echo "Screenshots:  $count files ($size)"
+    echo "Latest:       $latest_name"
+    echo "Max kept:     $MAX"
+}
+
+cmd_latest() {
+    if [ -L "$LATEST" ] && [ -f "$LATEST" ]; then
+        readlink -f "$LATEST"
+    else
+        echo "No screenshots yet" >&2
+        return 1
+    fi
+}
+
+cmd_clean() {
+    local keep="${1:-$MAX}"
+    local before
+    before=$(find "$SCREENSHOTS_DIR" -maxdepth 1 -name 'screenshot_*.png' 2>/dev/null | wc -l)
+    cleanup_old "$keep"
+    local after
+    after=$(find "$SCREENSHOTS_DIR" -maxdepth 1 -name 'screenshot_*.png' 2>/dev/null | wc -l)
+    echo "Cleaned: $((before - after)) removed, $after remaining"
+}
+
+cmd_help() {
+    cat <<'EOF'
+clipshot — WSL2 screenshot bridge
+
+Usage: clipshot <command>
+
+Commands:
+  install       Install clipshot and enable systemd service
+  uninstall     Remove all installed files (keeps screenshots)
+  start         Start the service
+  stop          Stop the service
+  status        Show service state, screenshot count, disk usage
+  logs          Follow service logs (journalctl)
+  latest        Print path to most recent screenshot
+  clean [N]     Keep N most recent screenshots (default: 50)
+  run           Run in foreground (used by systemd)
+
+Environment:
+  CLIPSHOT_MAX  Max screenshots to keep (default: 50)
+EOF
+}
+
+case "${1:-}" in
+    run)        cmd_run ;;
+    install)    cmd_install ;;
+    uninstall)  cmd_uninstall ;;
+    start)      systemctl --user start clipshot.service ;;
+    stop)       systemctl --user stop clipshot.service ;;
+    status)     cmd_status ;;
+    logs)       journalctl --user -u clipshot -f ;;
+    latest)     cmd_latest ;;
+    clean)      cmd_clean "${2:-}" ;;
+    *)          cmd_help ;;
+esac

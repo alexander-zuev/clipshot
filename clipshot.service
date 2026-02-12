@@ -1,0 +1,12 @@
+[Unit]
+Description=clipshot — WSL2 screenshot bridge
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/clipshot run
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
