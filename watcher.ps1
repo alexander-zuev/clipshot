@@ -21,25 +21,8 @@ public class ClipboardWatcher {
 Add-Type -TypeDefinition $src -ReferencedAssemblies System.Runtime.InteropServices
 
 $lastHash = ""
-$form = New-Object System.Windows.Forms.Form
-$form.ShowInTaskbar = $false
-$form.WindowState = 'Minimized'
-$form.FormBorderStyle = 'None'
-$form.Size = New-Object System.Drawing.Size(1, 1)
 
-$form.Add_HandleCreated({
-    [ClipboardWatcher]::AddClipboardFormatListener($form.Handle) | Out-Null
-})
-
-$form.Add_FormClosing({
-    [ClipboardWatcher]::RemoveClipboardFormatListener($form.Handle) | Out-Null
-})
-
-# Override WndProc via a timer-based check after clipboard event
-$script:clipChanged = $false
-$form.Add_Activated({})
-
-# Use a custom NativeWindow to intercept WM_CLIPBOARDUPDATE
+# NativeWindow subclass to intercept WM_CLIPBOARDUPDATE
 $nativeWindowSrc = @"
 using System;
 using System.Windows.Forms;
@@ -56,18 +39,17 @@ public class ClipboardWindow : NativeWindow {
 "@
 Add-Type -TypeDefinition $nativeWindowSrc -ReferencedAssemblies System.Windows.Forms
 
-# Remove the basic form approach, use NativeWindow directly
-$form2 = New-Object System.Windows.Forms.Form
-$form2.ShowInTaskbar = $false
-$form2.WindowState = 'Minimized'
-$form2.FormBorderStyle = 'None'
-$form2.Size = New-Object System.Drawing.Size(1, 1)
-$form2.Opacity = 0
+$form = New-Object System.Windows.Forms.Form
+$form.ShowInTaskbar = $false
+$form.WindowState = 'Minimized'
+$form.FormBorderStyle = 'None'
+$form.Size = New-Object System.Drawing.Size(1, 1)
+$form.Opacity = 0
 
-$form2.Add_Shown({
+$form.Add_Shown({
     $clipWin = New-Object ClipboardWindow
-    $clipWin.AssignHandle($form2.Handle)
-    [ClipboardWatcher]::AddClipboardFormatListener($form2.Handle) | Out-Null
+    $clipWin.AssignHandle($form.Handle)
+    [ClipboardWatcher]::AddClipboardFormatListener($form.Handle) | Out-Null
 
     $clipWin.Add_ClipboardChanged({
         try {
@@ -91,7 +73,8 @@ $form2.Add_Shown({
             $script:lastHash = $hash
 
             $ts = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
-            $name = "screenshot_${ts}.png"
+            $short = $hash.Substring(0, 8)
+            $name = "screenshot_${ts}_${short}.png"
             $path = Join-Path $SavePath $name
             [System.IO.File]::WriteAllBytes($path, $bytes)
             $img.Dispose()
@@ -107,4 +90,4 @@ $form2.Add_Shown({
 
 [Console]::Out.WriteLine("READY")
 [Console]::Out.Flush()
-[System.Windows.Forms.Application]::Run($form2)
+[System.Windows.Forms.Application]::Run($form)

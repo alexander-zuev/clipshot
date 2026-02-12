@@ -16,10 +16,12 @@ win_save_path() {
 
 cleanup_old() {
     local keep="${1:-$MAX}"
-    local files
-    files=$(find "$SCREENSHOTS_DIR" -maxdepth 1 -name 'screenshot_*.png' -printf '%T@\t%p\n' 2>/dev/null | sort -rn | tail -n +$((keep + 1)) | cut -f2-)
-    [ -z "$files" ] && return 0
-    echo "$files" | xargs rm -f
+    find "$SCREENSHOTS_DIR" -maxdepth 1 -name 'screenshot_*.png' -printf '%T@\t%p\0' 2>/dev/null \
+        | sort -zrn \
+        | while IFS=$'\t' read -r -d '' _ts path; do
+            keep=$((keep - 1))
+            [ "$keep" -lt 0 ] && rm -f -- "$path"
+        done
 }
 
 cmd_run() {

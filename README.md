@@ -7,6 +7,13 @@ Built for CLI workflows where you need to reference screenshots (Claude Code, sc
 ## Install
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/alexander-zuev/clipshot/main/install.sh | bash
+clipshot start
+```
+
+Or clone the repo:
+
+```bash
 git clone https://github.com/alexander-zuev/clipshot.git
 cd clipshot
 ./clipshot install

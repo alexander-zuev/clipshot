@@ -1,0 +1,7 @@
+# Linux files must stay LF even on Windows checkout
+clipshot text eol=lf
+clipshot.service text eol=lf
+install.sh text eol=lf
+
+# PowerShell runs on Windows, CRLF is fine
+*.ps1 text eol=crlf
