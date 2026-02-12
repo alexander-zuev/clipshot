@@ -1,13 +1,13 @@
 # clipshot
 
-WSL2 screenshot bridge. Win+Shift+S → `~/.screenshots/latest.png`.
+WSL2 screenshot bridge. Take a screenshot with Win+Shift+S — it's instantly available at `~/.screenshots/latest.png`.
 
-Event-driven clipboard listener (zero CPU when idle, instant detection). No polling, no clipboard interference, no Python dependencies.
+Built for CLI workflows where you need to reference screenshots (Claude Code, scripts, etc.) without leaving the terminal.
 
 ## Install
 
 ```bash
-git clone https://github.com/abzuev/clipshot.git
+git clone https://github.com/alexander-zuev/clipshot.git
 cd clipshot
 ./clipshot install
 clipshot start
@@ -26,16 +26,15 @@ clipshot uninstall       # remove everything (keeps screenshots)
 
 ## How it works
 
-Two components connected by a pipe:
+A PowerShell clipboard listener runs on Windows and watches for image events via `WM_CLIPBOARDUPDATE`. When you take a screenshot, it saves the image as PNG and signals the WSL2 side over stdout. The bash daemon picks it up, updates a `latest.png` symlink, and auto-cleans old files.
 
-1. **watcher.ps1** (Windows) — registers for `WM_CLIPBOARDUPDATE` events, saves clipboard images as PNG, prints filenames to stdout
-2. **clipshot** (WSL2) — reads filenames, updates `latest.png` symlink, auto-cleans old files
-
-Managed by systemd user service (auto-start, restart on crash, journal logs).
+Runs as a systemd user service — starts on boot, restarts on crash, logs to journal.
 
 ```
-Win+Shift+S → Windows clipboard → watcher.ps1 → SAVED:filename → clipshot → ~/.screenshots/latest.png
+Win+Shift+S → clipboard → watcher.ps1 → stdout → clipshot → ~/.screenshots/latest.png
 ```
+
+The clipboard listener is read-only — it never writes to the clipboard, so copy/paste works normally.
 
 ## Configuration
 
@@ -55,9 +54,8 @@ Win+Shift+S → Windows clipboard → watcher.ps1 → SAVED:filename → clipsho
 
 ## Requirements
 
-- WSL2
+- WSL2 with systemd enabled (`/etc/wsl.conf` → `[boot] systemd=true`)
 - PowerShell (ships with Windows)
-- systemd enabled in WSL (`/etc/wsl.conf` → `[boot] systemd=true`)
 
 ## License
 
