@@ -21,6 +21,7 @@ public class ClipboardWatcher {
 Add-Type -TypeDefinition $src -ReferencedAssemblies System.Runtime.InteropServices
 
 $lastHash = ""
+$script:hasher = [System.Security.Cryptography.SHA256]::Create()
 
 # NativeWindow subclass to intercept WM_CLIPBOARDUPDATE
 $nativeWindowSrc = @"
@@ -52,6 +53,8 @@ $form.Add_Shown({
     [ClipboardWatcher]::AddClipboardFormatListener($form.Handle) | Out-Null
 
     $clipWin.Add_ClipboardChanged({
+        $img = $null
+        $ms = $null
         try {
             $data = [System.Windows.Forms.Clipboard]::GetDataObject()
             if ($null -eq $data) { return }
@@ -64,9 +67,8 @@ $form.Add_Shown({
             $ms = New-Object System.IO.MemoryStream
             $img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
             $bytes = $ms.ToArray()
-            $ms.Close()
             $hash = [System.BitConverter]::ToString(
-                [System.Security.Cryptography.SHA256]::Create().ComputeHash($bytes)
+                $script:hasher.ComputeHash($bytes)
             ).Replace("-","").Substring(0,16)
 
             if ($hash -eq $script:lastHash) { return }
@@ -77,13 +79,15 @@ $form.Add_Shown({
             $name = "screenshot_${ts}_${short}.png"
             $path = Join-Path $SavePath $name
             [System.IO.File]::WriteAllBytes($path, $bytes)
-            $img.Dispose()
 
             [Console]::Out.WriteLine("SAVED:$name")
             [Console]::Out.Flush()
         } catch {
             [Console]::Out.WriteLine("ERROR:$($_.Exception.Message)")
             [Console]::Out.Flush()
+        } finally {
+            if ($null -ne $ms) { $ms.Dispose() }
+            if ($null -ne $img) { $img.Dispose() }
         }
     })
 })

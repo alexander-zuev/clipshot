@@ -28,6 +28,7 @@ clipshot latest          # print path to latest screenshot
 clipshot clean 20        # keep 20 most recent, delete rest
 clipshot logs            # follow service logs
 clipshot stop            # stop the service
+clipshot version         # print installed version
 clipshot uninstall       # remove everything (keeps screenshots)
 ```
 

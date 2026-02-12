@@ -1,13 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+VERSION="0.2.0"
 SCREENSHOTS_DIR="$HOME/.screenshots"
 LATEST="$SCREENSHOTS_DIR/latest.png"
 MAX="${CLIPSHOT_MAX:-50}"
 SHARE_DIR="$HOME/.local/share/clipshot"
 BIN_DIR="$HOME/.local/bin"
 SERVICE_DIR="$HOME/.config/systemd/user"
+PIDFILE="$SHARE_DIR/clipshot.pid"
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Resolve powershell.exe — systemd services lack WSL interop PATH
+find_powershell() {
+    local ps
+    ps=$(command -v powershell.exe 2>/dev/null) && [ -x "$ps" ] && { echo "$ps"; return; }
+    for p in /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe \
+             /mnt/c/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe; do
+        [ -x "$p" ] && { echo "$p"; return; }
+    done
+    echo "clipshot: powershell.exe not found — is WSL interop enabled?" >&2
+    return 1
+}
 
 # Convert WSL home to Windows UNC path for PowerShell
 win_save_path() {
@@ -25,17 +39,28 @@ cleanup_old() {
 }
 
 cmd_run() {
-    mkdir -p "$SCREENSHOTS_DIR"
+    # Prevent duplicate instances
+    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+        echo "clipshot: already running (pid $(cat "$PIDFILE"))" >&2
+        return 1
+    fi
+    mkdir -p "$SCREENSHOTS_DIR" "$SHARE_DIR"
+    echo $$ > "$PIDFILE"
+    trap 'rm -f "$PIDFILE"' EXIT INT TERM
+
     local wpath
     wpath=$(win_save_path)
 
-    powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass \
+    local ps
+    ps=$(find_powershell)
+
+    "$ps" -NoProfile -NonInteractive -ExecutionPolicy Bypass \
         -File "$SHARE_DIR/watcher.ps1" -SavePath "$wpath" 2>&1 |
     while IFS= read -r line; do
         line="${line%%$'\r'}"  # strip CR from Windows output
         case "$line" in
             READY)
-                echo "clipshot: watcher ready" >&2 ;;
+                echo "👀 Watching clipboard for screenshots..." >&2 ;;
             SAVED:*)
                 local name="${line#SAVED:}"
                 local file="$SCREENSHOTS_DIR/$name"
@@ -43,14 +68,14 @@ cmd_run() {
                 for _ in 1 2 3 4 5; do [ -f "$file" ] && break; sleep 0.2; done
                 if [ -f "$file" ]; then
                     ln -sf "$file" "$LATEST"
-                    echo "clipshot: saved $name" >&2
+                    echo "📸 $name" >&2
                     cleanup_old "$MAX"
                 else
-                    echo "clipshot: file not found after save: $name" >&2
+                    echo "⚠️  File not found after save: $name" >&2
                 fi
                 ;;
             ERROR:*)
-                echo "clipshot: ${line}" >&2 ;;
+                echo "❌ ${line#ERROR:}" >&2 ;;
             *)
                 ;;  # ignore noise
         esac
@@ -58,6 +83,7 @@ cmd_run() {
 }
 
 cmd_install() {
+    echo "📦 Installing clipshot..."
     mkdir -p "$BIN_DIR" "$SHARE_DIR" "$SERVICE_DIR" "$SCREENSHOTS_DIR"
     cp "$REPO_DIR/clipshot" "$BIN_DIR/clipshot"
     chmod +x "$BIN_DIR/clipshot"
@@ -65,17 +91,18 @@ cmd_install() {
     cp "$REPO_DIR/clipshot.service" "$SERVICE_DIR/clipshot.service"
     systemctl --user daemon-reload
     systemctl --user enable clipshot.service
-    echo "Installed. Run: clipshot start"
+    echo "✅ Installed. Run: clipshot start"
 }
 
 cmd_uninstall() {
+    echo "🗑️  Uninstalling clipshot..."
     systemctl --user stop clipshot.service 2>/dev/null || true
     systemctl --user disable clipshot.service 2>/dev/null || true
     rm -f "$BIN_DIR/clipshot"
     rm -rf "$SHARE_DIR"
     rm -f "$SERVICE_DIR/clipshot.service"
     systemctl --user daemon-reload
-    echo "Uninstalled. Screenshots in $SCREENSHOTS_DIR preserved."
+    echo "✅ Removed. Screenshots in $SCREENSHOTS_DIR preserved."
 }
 
 cmd_status() {
@@ -128,6 +155,7 @@ Commands:
   logs          Follow service logs (journalctl)
   latest        Print path to most recent screenshot
   clean [N]     Keep N most recent screenshots (default: 50)
+  version       Print version
   run           Run in foreground (used by systemd)
 
 Environment:
@@ -135,12 +163,24 @@ Environment:
 EOF
 }
 
+cmd_start() {
+    systemctl --user start clipshot.service
+    echo "✅ Started. Take a screenshot with Win+Shift+S"
+    echo "   View logs: clipshot logs"
+}
+
+cmd_stop() {
+    systemctl --user stop clipshot.service
+    echo "⏹️  Stopped."
+}
+
 case "${1:-}" in
     run)        cmd_run ;;
+    version)    echo "clipshot $VERSION" ;;
     install)    cmd_install ;;
     uninstall)  cmd_uninstall ;;
-    start)      systemctl --user start clipshot.service ;;
-    stop)       systemctl --user stop clipshot.service ;;
+    start)      cmd_start ;;
+    stop)       cmd_stop ;;
     status)     cmd_status ;;
     logs)       journalctl --user -u clipshot -f ;;
     latest)     cmd_latest ;;
